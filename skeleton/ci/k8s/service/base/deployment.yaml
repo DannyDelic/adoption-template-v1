@@ -1,0 +1,73 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ${{ values.label_name }}-deployment
+  namespace: ${{ values.label_name }}
+  labels:
+    app: ${{ values.label_name }}
+spec:
+  selector:
+    matchLabels:
+      app: ${{ values.label_name }}
+  strategy:
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        app: ${{ values.label_name }}
+        logging_opt_in: all
+      annotations:
+        sidecar.istio.io/inject: "false"
+    spec:
+      volumes:
+      - name: dsdsocket
+        hostPath:
+          path: /var/run/datadog/
+      containers:
+      - image: $IMAGE
+        name: ${{ values.label_name }}
+        ports:
+        - containerPort: 5555
+          name: grpc
+        - containerPort: 5556
+          name: http
+        resources: 
+          requests:
+            memory: "0Gi"
+            cpu: "10"
+          limits:
+            memory: "0Gi"
+            cpu: "10"
+        readinessProbe:
+          exec:
+            command: ["/bin/grpc_health_probe", "-addr=:5555"]
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          failureThreshold: 3
+          timeoutSeconds: 2
+        livenessProbe:
+          exec:
+            command: ["/bin/grpc_health_probe", "-addr=:5555"]
+          initialDelaySeconds: 30
+          periodSeconds: 60
+          failureThreshold: 3
+          timeoutSeconds: 2
+        volumeMounts:
+        - name: dsdsocket
+          mountPath: /var/run/datadog
+          readOnly: true
+        env:
+        - name: DATADOG_HOST
+          value: unix:///var/run/datadog/dsd.socket
+        - name: ASPNETCORE_ENVIRONMENT
+          value: "Development"
+        - name: ${{ values.label_name_shorthand }}_ApplicationName
+          value: "${{ values.label_name }}"
+        - name: ${{ values.label_name_shorthand }}_DatadogPort
+          value: "8125"
+        - name: ${{ values.label_name_shorthand }}_LogLevel
+          value: "Debug"
+        - name: ${{ values.label_name_shorthand }}_DatadogServer
+          value: "127.0.0.1"
+        - name: ${{ values.label_name_shorthand }}_DatabasePassword
+          value: "$DatabasePassword"

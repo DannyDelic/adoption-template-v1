@@ -1,0 +1,111 @@
+pipeline {
+	agent {
+		kubernetes {
+			cloud 'build'
+			label '${{ values.label_name }}-jenkins-build-agent'
+			yamlFile 'ci/k8s/build-agent.yaml'
+		}
+	}
+
+	options {
+		skipDefaultCheckout true // Use explicit checkout step
+		timestamps() // Prepend console output with timestamps
+		timeout(time: 15, unit: 'MINUTES')
+	}
+
+	environment {
+		VERSION = "1.0.${env.BUILD_NUMBER}"
+		REGISTRY = "registry.SECRET.io" // This is passed to deploy script to avoid redundancy
+	}
+
+	stages {
+		// Check out files and construct version tag
+		stage('Checkout') {
+			steps {
+				checkout scm
+				script {
+					env.GIT_COMMIT_VERSION = sh(script: "git rev-parse --short HEAD", returnStdout: true).replaceAll("[\r\n]+","")
+					env.LONG_VERSION = "$VERSION-rev$GIT_COMMIT_VERSION"
+					env.TAG = "$BRANCH_NAME.$LONG_VERSION"
+				}
+				sh "echo Building branch $BRANCH_NAME as $TAG"
+			}
+		}
+
+		// Build projects using dotnet
+		stage ('Build') {
+			steps {
+				container ('${{ values.label_name }}-builder') {
+					// It looks like Jenkins creates new directories with r-x which prevents the publish test results step below from
+					// translating the test results as needed. Without changing the permissions on the output directory the publish
+					// step fails with an IOException. The Java code for the plugin shows that this happens when creating the output
+					// file needed for the translation.
+					//
+					// Furthermore, Jenkins appears to run each "sh" invocation in its own process, so we need to set umask in the same
+					// process instance as dotnet test which produces the test results
+					sh "umask 000; cd src/${{ values.service_name }} && dotnet restore --no-cache -s https://api.nuget.org/v3/index.json -s http://nuget.SECRET.SECRET/nuget && dotnet publish /p:TreatWarningsAsErrors=true /warnaserror -c Release -o out && cd ../${{ values.service_name }}.Tests && dotnet test --logger=trx"
+				}
+			}
+		}
+
+		// Push master-images to docker
+		stage ('Dockerize') {
+			when {
+				branch "master"
+			}
+
+			steps {
+				container ('docker') {
+					sh "docker build . -f ci/docker/${{ values.service_name }}.Service.Dockerfile -t $REGISTRY/${{ values.label_name }}/${{ values.label_name }}-service:$TAG"
+
+					withCredentials([usernamePassword(credentialsId: '${{ values.label_name }}-docker-login', passwordVariable: 'pass', usernameVariable: 'user')]) {
+						sh "echo $pass | docker login -u '$user' --password-stdin '$REGISTRY'"
+					}
+					sh "docker push $REGISTRY/${{ values.label_name }}/${{ values.label_name }}-service:$TAG"
+				}
+			}
+		}
+
+		// TODO MAYBE: Do we need to publish something for clients/PFG?
+		// // Push nugets
+		// stage ('Nugets') {
+		// 	when {
+		// 		branch "master"
+		// 	}
+
+		// 	steps {
+		// 		container ('dotnet-cake') {
+		// 			// For now use ** glob pattern to work around "nuget push" oddity; see https://github.com/NuGet/Home/issues/4393#issuecomment-441040312
+		// 			sh "dotnet nuget push ./output/nupkgs/**/*.nupkg -s=https://nuget.SECRET.SECRET:8080/ -k=4e515689ae489f5e487c9e92f4498a87 "
+		// 		}
+		// 	}
+		// }
+
+		stage ('Start Deploy') {
+			when {
+				branch "master"
+			}
+			steps {
+				build job: '${{ values.label_name }}-deploy',
+				parameters: [
+					string(name: 'REGISTRY', value: "${REGISTRY}"),
+					string(name: 'TAG', value: "${TAG}"),
+					string(name: 'GIT_COMMIT_VERSION', value: "${GIT_COMMIT_VERSION}")
+				],
+				wait: false
+			}
+		}
+	}
+
+	post {
+		always {
+			// This step picks up the .trx files produced by the dotnet test step above. The .trx files are translated from mstest
+			// to junit which Jenkins supports. In order to do this the test results directories need to be writable which is handled
+			// using umask above.
+			//
+			// The publisher plugin also looks for code coverage files. We're currently not tracking test coverage, so the log file
+			// are missing and the log file shows this. These warnings can safely be ignored.
+			step([$class: 'MSTestPublisher', testResultsFile:"**/*.trx", failOnError: true, keepLongStdio: true])
+		}
+	}
+}

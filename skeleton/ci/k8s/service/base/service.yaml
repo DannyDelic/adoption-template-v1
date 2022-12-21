@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: ${{ values.label_name }}-service
+  namespace: ${{ values.label_name }}
+spec:
+  ports:
+    - name: http
+      port: 5556
+      targetPort: 5556
+  selector:
+    app: ${{ values.label_name }}

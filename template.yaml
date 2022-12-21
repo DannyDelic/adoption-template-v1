@@ -2,12 +2,12 @@ apiVersion: scaffolder.backstage.io/v1beta3
 kind: Template
 metadata:
   name: adoption-template-cs
-  title: HelloWorldAdoption
-  description: WIP CS service with recommended configuration for Siteimprove
+  title: Adoption Microservice
+  description: C# service with recommended configuration for Siteimprove
   tags:
-    - cs
+    - C#
 spec:
-  owner: me
+  owner: adoption
   type: service
   parameters:
     - title: Provide some simple information

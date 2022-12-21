@@ -1,0 +1,15 @@
+[*]
+indent_style = tab
+indent_size = 2
+tab_width = 2
+end_of_line = crlf
+insert_final_newline = true
+trim_trailing_whitespace = false
+root = true
+
+[{Makefile,**.mk}]
+# Use tabs for indentation (Makefiles require tabs)
+indent_style = tab
+
+[*.yaml]
+indent_style = space

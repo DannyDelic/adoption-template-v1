@@ -1,0 +1,83 @@
+import org.jenkinsci.plugins.pipeline.modeldefinition.Utils
+
+pipeline {
+	agent {
+		kubernetes {
+			cloud 'build'
+			label '${{ values.label_name }}-jenkins-build-agent'
+			yamlFile 'ci/k8s/build-agent.yaml'
+		}
+	}
+
+	options {
+		skipDefaultCheckout true // Use explicit checkout step
+		timestamps() // Prepend console output with timestamps
+	}
+
+	// Parameters set by parent script - must be imported below
+	parameters {
+		string(name: 'REGISTRY')
+		string(name: 'TAG')
+		string(name: 'GIT_COMMIT_VERSION')
+	}
+
+	// Shared environment for all stages
+	environment {
+		IMAGE = "$REGISTRY/${{ values.label_name }}/${{ values.label_name }}-service:$TAG"
+	}
+
+	stages {
+		stage('Deploy to Stage') { steps { DeployTo(STAGE_NAME, "SECRET", false) } }
+		stage('Deploy to Prod EU') { steps { DeployTo(STAGE_NAME, "SECRET", true) } }
+		stage('Deploy to Prod US') { steps { DeployTo(STAGE_NAME, "SECRET", true) } }
+	}
+}
+
+def DeployTo(String stagename, String deployment, Boolean ask) {
+	// Check out current branch and get yaml files from hash matching when the build was submitted
+	checkout scm
+	sh "git checkout $GIT_COMMIT_VERSION ci/k8s/"
+	script {
+		try {
+			if (ask) {
+				timeout(time: 1) {
+					sh "echo Accepting this step deploys ${{ values.label_name }} to ${deployment}."
+					sh "echo This is intended as a manual step once testing is complete on test"
+					sh "echo To deploy to prod, restart this build from this stage"
+					input(message: "${stagename} ?")
+				}
+			}
+
+			// TODO for terraform
+			// container ('terraform') {
+			// ....
+			// }
+			container('k8s-tools') {
+				withCredentials([
+					file(credentialsId: "${{ values.label_name }}-kubeconfig-${deployment}", variable: "kubeconfig"),
+					usernamePassword(credentialsId: "${{ values.label_name }}-db-pw-${deployment}", usernameVariable: 'dbUsername', passwordVariable: 'dbPassword')
+				]) {
+					script {
+						env.DatabasePassword = "${dbPassword}"
+					}
+					sh "mkdir -p ~/.kube"
+					sh "cat ${kubeconfig} > ~/.kube/config"
+					sh "apk add --update gettext"
+					//sh 'echo "${dbPassword}" | base64'
+					// Use kustomization yaml files
+					sh "kubectl kustomize ci/k8s/service/overlays/${deployment} | envsubst | kubectl apply -f -"
+					sh "kubectl kustomize ci/k8s/history/overlays/${deployment} | envsubst | kubectl apply -f -"
+				}
+			}
+		}
+		catch (Exception e) {
+			if (ask) {
+				sh "echo User chose to skip ${deployment}"
+				sh "echo Exception-message was ${e.toString()}";
+				Utils.markStageSkippedForConditional(stagename)
+			} else {
+				throw e;
+			}
+		}
+	}
+}

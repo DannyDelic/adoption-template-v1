@@ -1,0 +1,12 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+- deployment.yaml
+- service.yaml
+- ingress-http.yaml
+- pod-disruption-budget.yaml
+commonLabels:
+  service_domain: ${{ values.label_name }}
+  system: ${{ values.label_name }}
+  service: ${{ values.label_name }}
+  tags.datadoghq.com/service: ${{ values.label_name }}
