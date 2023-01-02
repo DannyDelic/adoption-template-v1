@@ -3,9 +3,9 @@ kind: Template
 metadata:
   name: adoption-template-cs
   title: Adoption Microservice
-  description: C# service with recommended configuration for Siteimprove
+  description: CSharp service with recommended configuration for Siteimprove
   tags:
-    - C#
+    - CSharp
 spec:
   owner: adoption
   type: service
